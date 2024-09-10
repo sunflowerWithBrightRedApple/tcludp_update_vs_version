@@ -11,7 +11,7 @@
  * $Id$
  *----------------------------------------------------------------------
  */
-
+#pragma comment(lib, "legacy_stdio_definitions.lib")
 #ifndef UDP_TCL_H
 #define UDP_TCL_H
 
@@ -37,6 +37,7 @@
 #    define WINVER 0x0501
 #  endif
 #  include <winsock2.h>
+#  pragma comment(lib, "WS2_32")  // Á´½Óµ½ WS2_32.lib
 #  include <ws2tcpip.h>
 #else
 #  if HAVE_UNISTD_H
@@ -70,6 +71,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include "tcl.h"
+
 
 #ifdef BUILD_udp
 #undef TCL_STORAGE_CLASS

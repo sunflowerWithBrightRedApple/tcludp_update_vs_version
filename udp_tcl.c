@@ -16,6 +16,7 @@
 #endif
 
 #include "udp_tcl.h"
+//#include "pch.h"
 #include <VersionHelpers.h>
 #include <winsock2.h>
 #pragma comment(lib, "WS2_32")  // Á´½Óµ½ WS2_32.lib
@@ -172,7 +173,7 @@ static Tcl_ChannelType Udp_ChannelType = {
  * ----------------------------------------------------------------------
  */
 int
-Udp_Init(Tcl_Interp *interp)
+tcludp_Init(Tcl_Interp *interp)
 {
     int r = TCL_OK;
 #if defined(DEBUG) && !defined(WIN32)
@@ -202,7 +203,7 @@ Udp_Init(Tcl_Interp *interp)
 }
 
 int
-Udp_SafeInit(Tcl_Interp *interp)
+tcludp_SafeInit(Tcl_Interp *interp)
 {
     Tcl_SetResult(interp, "permission denied", TCL_STATIC);
     return TCL_ERROR;
@@ -302,7 +303,7 @@ int udpOpen(ClientData clientData, Tcl_Interp *interp,
     
 	sock = socket(ss_family, SOCK_DGRAM, 0);
     if (sock < 0) {
-        snprintf(errBuf, 255, "failed to create socket");
+        snprintf_s(errBuf, 255, "failed to create socket");
         errBuf[255] = 0;
         UDPTRACE("%s\n", errBuf);
         Tcl_AppendResult(interp, errBuf, (char *)NULL);
@@ -376,7 +377,7 @@ int udpOpen(ClientData clientData, Tcl_Interp *interp,
     statePtr = (UdpState *) ckalloc((unsigned) sizeof(UdpState));
     memset(statePtr, 0, sizeof(UdpState));
     statePtr->sock = sock;
-    sprintf(channelName, "sock%d", statePtr->sock);
+    sprintf_s(channelName, "sock%d", statePtr->sock);
     statePtr->channel = Tcl_CreateChannel(&Udp_ChannelType, channelName,
                                           (ClientData) statePtr,
                                           (TCL_READABLE | TCL_WRITABLE | TCL_MODE_NONBLOCKING));
@@ -456,7 +457,7 @@ udpConf(ClientData clientData, Tcl_Interp *interp,
 			hasOption(argc,argv,"-ttl")) { 
 			r = Tcl_SetChannelOption(interp, statePtr->channel, argv[2], argv[3]);
 		} else {
-			sprintf(remoteOptions, "%s %s",argv[2],argv[3] );
+			sprintf_s(remoteOptions, "%s %s",argv[2],argv[3] );
 			r = Tcl_SetChannelOption(interp, statePtr->channel, "-remote", remoteOptions);
 		}
 	}
@@ -631,6 +632,11 @@ UDP_CheckProc(ClientData data, int flags)
                 ckfree(message);
             } else {
                 p = (PacketList *)ckalloc(sizeof(struct PacketList));
+                if (p == NULL) {
+                    UDPTRACE("ckalloc error\n");
+                    ckfree(message);
+                    exit(1);
+                }
                 p->message = message;
                 p->actual_size = actual_size;
 #ifdef WIN32
@@ -639,19 +645,39 @@ UDP_CheckProc(ClientData data, int flags)
 				 * not work correctly in case of multithreaded. Also inet_ntop() is
 				 * not available in older windows versions.
 				 */
+                if (remoteaddrlen > sizeof(remoteaddr)) {
+                    remoteaddrlen = sizeof(remoteaddr);
+                }
 				if (WSAAddressToString((struct sockaddr *)&recvaddr,socksize,
 					NULL,remoteaddr,&remoteaddrlen)==0) {
 					/* 
 					 * We now have an address in the format of <ip address>:<port> 
 					 * Search backwards for the last ':'
 					 */
+                    if (remoteaddrlen >= sizeof(remoteaddr)) {
+                        remoteaddr[sizeof(remoteaddr) - 1] = '\0';
+                    }
 					portaddr = strrchr(remoteaddr,':') + 1;
-					strncpy(hostaddr,remoteaddr,strlen(remoteaddr)-strlen(portaddr)-1);
+                    size_t hostaddr_len = strlen(remoteaddr) - strlen(portaddr) - 1;
+                    if (hostaddr_len >= sizeof(hostaddr)) {
+                        hostaddr_len = sizeof(hostaddr) - 1;
+                    }
+                    snprintf_s(hostaddr, sizeof(hostaddr), "%.*s", (int)hostaddr_len, remoteaddr);
+                    hostaddr[sizeof(hostaddr) - 1] = '\0';
+					//strncpy(hostaddr,remoteaddr,strlen(remoteaddr)-strlen(portaddr)-1);
 					statePtr->peerport = atoi(portaddr);
 					p->r_port = statePtr->peerport;
-					strcpy(statePtr->peerhost,hostaddr);
-					strcpy(p->r_host,hostaddr);
-				}
+
+                    strncpy_s(statePtr->peerhost, sizeof(statePtr->peerhost), hostaddr, _TRUNCATE);
+                    statePtr->peerhost[sizeof(statePtr->peerhost) - 1] = '\0';
+
+                    strncpy_s(p->r_host, sizeof(p->r_host), hostaddr, _TRUNCATE);
+                    p->r_host[sizeof(p->r_host) - 1] = '\0';
+					//strcpy(statePtr->peerhost,hostaddr);
+					//strcpy(p->r_host,hostaddr);
+                } else {
+                    UDPTRACE("WSAAddressToString failed with error: %d\n", WSAGetLastError());
+                }
 #else
 				if (statePtr->ss_family == AF_INET ) {
 					inet_ntop(AF_INET, ((struct sockaddr_in*)&recvaddr)->sin_addr, statePtr->peerhost, sizeof(statePtr->peerhost) );
@@ -687,6 +713,10 @@ UDP_CheckProc(ClientData data, int flags)
             
             if (actual_size >= 0) {
                 evPtr = (UdpEvent *) ckalloc(sizeof(UdpEvent));
+                if (evPtr == NULL) {
+                    UDPTRACE("ckalloc error\n");
+                    exit(1);
+                }
                 evPtr->header.proc = UdpEventProc;
                 evPtr->chan = statePtr->channel;
                 Tcl_QueueEvent((Tcl_Event *) evPtr, TCL_QUEUE_TAIL);
@@ -962,7 +992,7 @@ udpClose(ClientData instanceData, Tcl_Interp *interp)
 #ifndef WIN32
         sprintf(errBuf, "udp_close: %d, error: %d\n", sock, errorCode);
 #else
-        sprintf(errBuf, "udp_cose: %d, error: %d\n", sock, WSAGetLastError());
+        sprintf_s(errBuf, "udp_cose: %d, error: %d\n", sock, WSAGetLastError());
 #endif
         UDPTRACE("UDP error - close %d", sock);
     } else {
@@ -1060,17 +1090,36 @@ udpOutput(ClientData instanceData, CONST84 char *buf, int toWrite, int *errorCod
 
 		written = sendto(statePtr->sock, buf, toWrite, 0, (struct sockaddr *)&sendaddrv6, socksize);
 	} else {
+        memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
 		socksize = sizeof(sendaddrv4);
 		memset(&sendaddrv4, 0, socksize);
-        sendaddrv4.sin_addr.s_addr = inet_addr(statePtr->remotehost);
-
+        //sendaddrv4.sin_addr.s_addr = inet_addr(statePtr->remotehost);
+        if (inet_pton(AF_INET, statePtr->remotehost, &sendaddrv4.sin_addr) != 1) {
+            UDPTRACE("UDP error - Invalid IPv4 address");
+            return -1;
+        }
+        
         if (sendaddrv4.sin_addr.s_addr == -1) {
-            name = gethostbyname(statePtr->remotehost);
+            if (getaddrinfo(statePtr->remotehost, NULL, &hints, &result) != 0) {
+                UDPTRACE("UDP error - gethostbyname");
+                return -1;
+            }
+            else
+            {
+                struct sockaddr_in* ipv4 = (struct sockaddr_in*)result->ai_addr;
+                sendaddrv4.sin_addr = ipv4->sin_addr;
+                freeaddrinfo(result);
+            }
+
+            /*name = gethostbyname(statePtr->remotehost);
 			if (name == NULL) {
 				UDPTRACE("UDP error - gethostbyname");
 				return -1;
 			}
-			memcpy(&sendaddrv4.sin_addr, name->h_addr, sizeof(sendaddrv4.sin_addr));
+			memcpy(&sendaddrv4.sin_addr, name->h_addr, sizeof(sendaddrv4.sin_addr));*/
 		}
 
 		sendaddrv4.sin_family = AF_INET;
@@ -1146,7 +1195,7 @@ udpInput(ClientData instanceData, char *buf, int bufSize, int *errorCode)
     ckfree((char *) packets->message);
     UDPTRACE("udp_recv message\n%s", buf);
     bufSize = packets->actual_size;
-    strcpy(statePtr->peerhost, packets->r_host);
+    strcpy_s(statePtr->peerhost, sizeof(statePtr->peerhost), packets->r_host);
     statePtr->peerport = packets->r_port;
     statePtr->packets = packets->next;
     ckfree((char *) packets);
@@ -1281,19 +1330,37 @@ UdpMulticast(UdpState *statePtr, Tcl_Interp *interp,
 	if (statePtr->ss_family == AF_INET) {
 		struct ip_mreq mreq;
 		struct hostent *name;
-		
+        struct addrinfo hints, * res;
+
+        memset(&hints, 0, sizeof hints);
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_DGRAM;
 		memset(&mreq, 0, sizeof(mreq));
 		
-		mreq.imr_multiaddr.s_addr = inet_addr(Tcl_GetString(multicastgrp));
-		if (mreq.imr_multiaddr.s_addr == -1) {
-			name = gethostbyname(Tcl_GetString(multicastgrp));
-			if (name == NULL) {
-				if (interp != NULL) {
-					Tcl_SetResult(interp, "invalid group name", TCL_STATIC);
-				}
+		//mreq.imr_multiaddr.s_addr = inet_addr(Tcl_GetString(multicastgrp));
+        if (inet_pton(AF_INET, Tcl_GetString(multicastgrp), &mreq.imr_multiaddr) != 1) {
+            Tcl_SetResult(interp, "invalid IPV4 name", TCL_STATIC);
+            return TCL_ERROR;
+        }
+		if (mreq.imr_multiaddr.s_addr == INADDR_NONE) {
+			//name = gethostbyname(Tcl_GetString(multicastgrp));
+            if (getaddrinfo(statePtr->remotehost, NULL, &hints, &res) != 0) {
+				Tcl_SetResult(interp, "invalid group name", TCL_STATIC);
 				return TCL_ERROR;
-			}
-			memcpy(&mreq.imr_multiaddr.s_addr, name->h_addr, sizeof(mreq.imr_multiaddr));
+            }
+            else
+            {
+                struct sockaddr_in* ipv4 = (struct sockaddr_in*)res->ai_addr;
+                mreq.imr_multiaddr = ipv4->sin_addr;
+                freeaddrinfo(res);
+            }
+			//if (name == NULL) {
+			//	if (interp != NULL) {
+			//		Tcl_SetResult(interp, "invalid group name", TCL_STATIC);
+			//	}
+			//	return TCL_ERROR;
+			//}
+			//memcpy(&mreq.imr_multiaddr.s_addr, name->h_addr, sizeof(mreq.imr_multiaddr));
 		}
 		
 		if (nwinterface_index==-1) {
@@ -1409,7 +1476,7 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 		Tcl_DStringInit(&ds);
 		for (p = options; *p != NULL; p++) {
 			char op[16];
-			sprintf(op, "-%s", *p);
+			sprintf_s(op, "-%s", *p);
 			Tcl_DStringSetLength(&ds, 0);
 			udpGetOption(instanceData, interp, op, &ds);
 			Tcl_DStringAppend(optionValue, " ", 1);
@@ -1427,12 +1494,12 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 		if (!strcmp("-myport", optionName)) {
 			
 			Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-			sprintf(Tcl_DStringValue(&ds), "%u", ntohs(statePtr->localport));
+			sprintf_s(Tcl_DStringValue(&ds), "%u", ntohs(statePtr->localport));
 			
 		} else if (!strcmp("-remote", optionName)) {
             if (statePtr->remotehost && *statePtr->remotehost) {
 				Tcl_DStringSetLength(&dsInt, TCL_INTEGER_SPACE);
-				sprintf(Tcl_DStringValue(&dsInt), "%u", 
+				sprintf_s(Tcl_DStringValue(&dsInt), "%u", 
 					ntohs(statePtr->remoteport));
 				Tcl_DStringAppendElement(&ds, statePtr->remotehost);
 				Tcl_DStringAppendElement(&ds, Tcl_DStringValue(&dsInt));
@@ -1442,7 +1509,7 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 			
            if (statePtr->peerhost && *statePtr->peerhost) {
  				Tcl_DStringSetLength(&dsInt, TCL_INTEGER_SPACE);
-				sprintf(Tcl_DStringValue(&dsInt), "%u", statePtr->peerport);
+				sprintf_s(Tcl_DStringValue(&dsInt), "%u", statePtr->peerport);
 				Tcl_DStringAppendElement(&ds, statePtr->peerhost);
 				Tcl_DStringAppendElement(&ds, Tcl_DStringValue(&dsInt));
 		   }
@@ -1461,14 +1528,14 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 			r = udpGetBroadcastOption(statePtr,interp,&tmp);
 			if (r==TCL_OK) {
 				Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-				sprintf(Tcl_DStringValue(&ds), "%d", tmp);
+				sprintf_s(Tcl_DStringValue(&ds), "%d", tmp);
 			}			 
 		} else if (!strcmp("-mcastloop", optionName)) {
 			unsigned char tmp = 0;			 
 			r = udpGetMcastloopOption(statePtr, interp,&tmp);
 			if (r==TCL_OK) {
 				Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-				sprintf(Tcl_DStringValue(&ds), "%d", (int)tmp);
+				sprintf_s(Tcl_DStringValue(&ds), "%d", (int)tmp);
 			}			 			 
 		} else if (!strcmp("-ttl", optionName)) {
 			
@@ -1476,7 +1543,7 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 			r = udpGetTtlOption(statePtr,interp,&tmp);
 			if (r==TCL_OK) {
 				Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-				sprintf(Tcl_DStringValue(&ds), "%u", tmp);
+				sprintf_s(Tcl_DStringValue(&ds), "%u", tmp);
 			}			 
 		} else {
 			CONST84 char **p;
@@ -1758,7 +1825,7 @@ udpSetRemoteOption(UdpState *statePtr, Tcl_Interp *interp,CONST84 char *newValue
 			Tcl_Obj *hostPtr, *portPtr;
 			
 			Tcl_ListObjIndex(interp, valPtr, 0, &hostPtr);
-			strcpy(statePtr->remotehost, Tcl_GetString(hostPtr));
+			strcpy_s(statePtr->remotehost, sizeof(statePtr->remotehost), Tcl_GetString(hostPtr));
 			
 			if (len == 2) {
 				Tcl_ListObjIndex(interp, valPtr, 1, &portPtr);            
@@ -1868,7 +1935,7 @@ udpTrace(const char *format, ...)
 
     static char buffer[1024];
     va_start (args, format);
-    _vsnprintf(buffer, 1023, format, args);
+    _vsnprintf_s(buffer, 1024, _TRUNCATE, format, args);
     OutputDebugString(buffer);
 
 #else /* ! WIN32 */
