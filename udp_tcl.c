@@ -16,10 +16,9 @@
 #endif
 
 #include "udp_tcl.h"
-//#include "pch.h"
+#include "pch.h"
 #include <VersionHelpers.h>
 #include <winsock2.h>
-#pragma comment(lib, "WS2_32")  // Á´½Óµ½ WS2_32.lib
 
 #ifdef WIN32
 #include <stdlib.h>
@@ -89,7 +88,7 @@ struct ipv6_mreq {
 
 FILE *dbg;
 
-#define MAXBUFFERSIZE 51200
+#define MAXBUFFERSIZE 65535
 
 static char errBuf[256];
 
@@ -172,8 +171,9 @@ static Tcl_ChannelType Udp_ChannelType = {
  * udpInit
  * ----------------------------------------------------------------------
  */
+//DLLEXPORT
 int
-tcludp_Init(Tcl_Interp *interp)
+Tcludp_vs_Init(Tcl_Interp *interp)
 {
     int r = TCL_OK;
 #if defined(DEBUG) && !defined(WIN32)
@@ -181,7 +181,7 @@ tcludp_Init(Tcl_Interp *interp)
 #endif
 
 #ifdef USE_TCL_STUBS
-    Tcl_InitStubs(interp, "8.4", 0);
+    Tcl_InitStubs(interp, "8.6", 0);
 #endif
 
 #ifdef WIN32
@@ -203,7 +203,7 @@ tcludp_Init(Tcl_Interp *interp)
 }
 
 int
-tcludp_SafeInit(Tcl_Interp *interp)
+Tcludp_vs_SafeInit(Tcl_Interp *interp)
 {
     Tcl_SetResult(interp, "permission denied", TCL_STATIC);
     return TCL_ERROR;
@@ -265,8 +265,7 @@ hasOption(int argc, CONST84 char * argv[],const char* option )
  *  interpreter
  * ----------------------------------------------------------------------
  */
-int udpOpen(ClientData clientData, Tcl_Interp *interp,
-        int argc, CONST84 char * argv[]) 
+int udpOpen(ClientData clientData, Tcl_Interp* interp, int argc, CONST84 char * argv[]) 
 {
     int sock;
     char channelName[20];
@@ -303,13 +302,13 @@ int udpOpen(ClientData clientData, Tcl_Interp *interp,
     
 	sock = socket(ss_family, SOCK_DGRAM, 0);
     if (sock < 0) {
-        snprintf_s(errBuf, 255, "failed to create socket");
+        _snprintf_s(errBuf, 255, _TRUNCATE, "failed to create socket");
         errBuf[255] = 0;
         UDPTRACE("%s\n", errBuf);
         Tcl_AppendResult(interp, errBuf, (char *)NULL);
         return TCL_ERROR;
     } 
-
+    
     /*
      * bug #1477669: avoid socket inheritence after exec
      */
@@ -377,10 +376,11 @@ int udpOpen(ClientData clientData, Tcl_Interp *interp,
     statePtr = (UdpState *) ckalloc((unsigned) sizeof(UdpState));
     memset(statePtr, 0, sizeof(UdpState));
     statePtr->sock = sock;
-    sprintf_s(channelName, "sock%d", statePtr->sock);
+    sprintf_s(channelName, sizeof(channelName), "sock%d", statePtr->sock);
     statePtr->channel = Tcl_CreateChannel(&Udp_ChannelType, channelName,
                                           (ClientData) statePtr,
                                           (TCL_READABLE | TCL_WRITABLE | TCL_MODE_NONBLOCKING));
+    Tcl_SetChannelBufferSize(statePtr->channel, MAXBUFFERSIZE);
     statePtr->doread = 1;
     statePtr->multicast = 0;
     statePtr->groupsObj = Tcl_NewListObj(0, NULL);
@@ -457,7 +457,7 @@ udpConf(ClientData clientData, Tcl_Interp *interp,
 			hasOption(argc,argv,"-ttl")) { 
 			r = Tcl_SetChannelOption(interp, statePtr->channel, argv[2], argv[3]);
 		} else {
-			sprintf_s(remoteOptions, "%s %s",argv[2],argv[3] );
+			sprintf_s(remoteOptions, sizeof(remoteOptions), "%s %s", argv[2], argv[3]);
 			r = Tcl_SetChannelOption(interp, statePtr->channel, "-remote", remoteOptions);
 		}
 	}
@@ -598,8 +598,11 @@ UDP_CheckProc(ClientData data, int flags)
 #ifdef WIN32
 	char hostaddr[256];
 	char* portaddr;
-	char remoteaddr[256];
+    char remoteaddr[256];
+    wchar_t remote_addr[256];
+    //char hostaddr[256];
   	int remoteaddrlen = sizeof(remoteaddr);
+    memset(remote_addr, 0, sizeof(remote_addr));
 	memset(hostaddr, 0 , sizeof(hostaddr));
 	memset(remoteaddr,0,sizeof(remoteaddr));
 #endif /*  WIN32 */
@@ -648,8 +651,10 @@ UDP_CheckProc(ClientData data, int flags)
                 if (remoteaddrlen > sizeof(remoteaddr)) {
                     remoteaddrlen = sizeof(remoteaddr);
                 }
-				if (WSAAddressToString((struct sockaddr *)&recvaddr,socksize,
-					NULL,remoteaddr,&remoteaddrlen)==0) {
+                if (WSAAddressToStringW((struct sockaddr*)&recvaddr, socksize,
+					NULL, remote_addr,&remoteaddrlen)==0) {
+                    
+                    WideCharToMultiByte(CP_ACP, 0, remote_addr, -1, remoteaddr, sizeof(remoteaddr), NULL, NULL);
 					/* 
 					 * We now have an address in the format of <ip address>:<port> 
 					 * Search backwards for the last ':'
@@ -662,8 +667,8 @@ UDP_CheckProc(ClientData data, int flags)
                     if (hostaddr_len >= sizeof(hostaddr)) {
                         hostaddr_len = sizeof(hostaddr) - 1;
                     }
-                    snprintf_s(hostaddr, sizeof(hostaddr), "%.*s", (int)hostaddr_len, remoteaddr);
-                    hostaddr[sizeof(hostaddr) - 1] = '\0';
+                    _snprintf_s(hostaddr, sizeof(hostaddr), _TRUNCATE, "%.*s", (int)hostaddr_len, remoteaddr);
+                    //hostaddr[sizeof(hostaddr) - 1] = '\0';
 					//strncpy(hostaddr,remoteaddr,strlen(remoteaddr)-strlen(portaddr)-1);
 					statePtr->peerport = atoi(portaddr);
 					p->r_port = statePtr->peerport;
@@ -842,6 +847,12 @@ Udp_WinHasSockets(Tcl_Interp *interp)
     static int hasSockets = 0;  /* 1 if the system supports sockets. */
     HANDLE socketThread;
     DWORD id;
+    WCHAR pathBuffer[MAX_PATH];
+    WCHAR fileName[] = L"WINSOCK.DLL"; // Wide-character string for the filename
+    WCHAR ext[] = L".DLL"; // Wide-character string for the extension
+    DWORD result;
+
+    ZeroMemory(pathBuffer, sizeof(pathBuffer));
     
     if (!initialized) {
         OSVERSIONINFOEX osvi;
@@ -871,9 +882,9 @@ Udp_WinHasSockets(Tcl_Interp *interp)
          * If we find winsock, then load the library and initialize the
          * stub table.
          */
-        
+        result = SearchPathW(NULL, fileName, ext, MAX_PATH, pathBuffer, NULL);
         if ((VerifyVersionInfo(&osvi, VER_MAJORVERSION | VER_MINORVERSION, dwlConditionMask))
-            || (SearchPath(NULL, "WINSOCK", ".DLL", 0, NULL, NULL) != 0)) {
+            || (result != 0)) {
             hasSockets = InitSockets();
         }
         
@@ -992,7 +1003,7 @@ udpClose(ClientData instanceData, Tcl_Interp *interp)
 #ifndef WIN32
         sprintf(errBuf, "udp_close: %d, error: %d\n", sock, errorCode);
 #else
-        sprintf_s(errBuf, "udp_cose: %d, error: %d\n", sock, WSAGetLastError());
+        sprintf_s(errBuf, sizeof(errBuf), "udp_cose: %d, error: %d\n", sock, WSAGetLastError());
 #endif
         UDPTRACE("UDP error - close %d", sock);
     } else {
@@ -1060,7 +1071,7 @@ udpOutput(ClientData instanceData, CONST84 char *buf, int toWrite, int *errorCod
 	UdpState *statePtr = (UdpState *) instanceData;
     int written;
     int socksize;
-    struct hostent *name;
+    //struct hostent *name;
     struct sockaddr_in sendaddrv4;
     struct sockaddr_in6 sendaddrv6;
 	struct addrinfo hints, *result;
@@ -1101,7 +1112,7 @@ udpOutput(ClientData instanceData, CONST84 char *buf, int toWrite, int *errorCod
             UDPTRACE("UDP error - Invalid IPv4 address");
             return -1;
         }
-        
+
         if (sendaddrv4.sin_addr.s_addr == -1) {
             if (getaddrinfo(statePtr->remotehost, NULL, &hints, &result) != 0) {
                 UDPTRACE("UDP error - gethostbyname");
@@ -1275,7 +1286,7 @@ UdpMulticast(UdpState *statePtr, Tcl_Interp *interp,
     const char *grp, int action)
 {
 	int r;
-	Tcl_Obj *tcllist , *multicastgrp , *nw_interface;
+	Tcl_Obj *tcllist , *multicastgrp = NULL, *nw_interface = NULL;
 	int len,result;
 	int nwinterface_index =-1;
 #ifndef WIN32
@@ -1329,7 +1340,6 @@ UdpMulticast(UdpState *statePtr, Tcl_Interp *interp,
 
 	if (statePtr->ss_family == AF_INET) {
 		struct ip_mreq mreq;
-		struct hostent *name;
         struct addrinfo hints, * res;
 
         memset(&hints, 0, sizeof hints);
@@ -1354,13 +1364,6 @@ UdpMulticast(UdpState *statePtr, Tcl_Interp *interp,
                 mreq.imr_multiaddr = ipv4->sin_addr;
                 freeaddrinfo(res);
             }
-			//if (name == NULL) {
-			//	if (interp != NULL) {
-			//		Tcl_SetResult(interp, "invalid group name", TCL_STATIC);
-			//	}
-			//	return TCL_ERROR;
-			//}
-			//memcpy(&mreq.imr_multiaddr.s_addr, name->h_addr, sizeof(mreq.imr_multiaddr));
 		}
 		
 		if (nwinterface_index==-1) {
@@ -1476,7 +1479,7 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 		Tcl_DStringInit(&ds);
 		for (p = options; *p != NULL; p++) {
 			char op[16];
-			sprintf_s(op, "-%s", *p);
+			sprintf_s(op, sizeof(op), "-%s", *p);
 			Tcl_DStringSetLength(&ds, 0);
 			udpGetOption(instanceData, interp, op, &ds);
 			Tcl_DStringAppend(optionValue, " ", 1);
@@ -1494,12 +1497,12 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 		if (!strcmp("-myport", optionName)) {
 			
 			Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-			sprintf_s(Tcl_DStringValue(&ds), "%u", ntohs(statePtr->localport));
+			sprintf_s(Tcl_DStringValue(&ds), sizeof(Tcl_DStringValue(&ds)), "%u", ntohs(statePtr->localport));
 			
 		} else if (!strcmp("-remote", optionName)) {
             if (statePtr->remotehost && *statePtr->remotehost) {
 				Tcl_DStringSetLength(&dsInt, TCL_INTEGER_SPACE);
-				sprintf_s(Tcl_DStringValue(&dsInt), "%u", 
+				sprintf_s(Tcl_DStringValue(&dsInt), sizeof(Tcl_DStringValue(&dsInt)), "%u",
 					ntohs(statePtr->remoteport));
 				Tcl_DStringAppendElement(&ds, statePtr->remotehost);
 				Tcl_DStringAppendElement(&ds, Tcl_DStringValue(&dsInt));
@@ -1509,7 +1512,7 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 			
            if (statePtr->peerhost && *statePtr->peerhost) {
  				Tcl_DStringSetLength(&dsInt, TCL_INTEGER_SPACE);
-				sprintf_s(Tcl_DStringValue(&dsInt), "%u", statePtr->peerport);
+				sprintf_s(Tcl_DStringValue(&dsInt), sizeof(Tcl_DStringValue(&dsInt)), "%u", statePtr->peerport);
 				Tcl_DStringAppendElement(&ds, statePtr->peerhost);
 				Tcl_DStringAppendElement(&ds, Tcl_DStringValue(&dsInt));
 		   }
@@ -1528,14 +1531,14 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 			r = udpGetBroadcastOption(statePtr,interp,&tmp);
 			if (r==TCL_OK) {
 				Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-				sprintf_s(Tcl_DStringValue(&ds), "%d", tmp);
+				sprintf_s(Tcl_DStringValue(&ds), sizeof(Tcl_DStringValue(&ds)), "%d", tmp);
 			}			 
 		} else if (!strcmp("-mcastloop", optionName)) {
 			unsigned char tmp = 0;			 
 			r = udpGetMcastloopOption(statePtr, interp,&tmp);
 			if (r==TCL_OK) {
 				Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-				sprintf_s(Tcl_DStringValue(&ds), "%d", (int)tmp);
+				sprintf_s(Tcl_DStringValue(&ds), sizeof(Tcl_DStringValue(&ds)), "%d", (int)tmp);
 			}			 			 
 		} else if (!strcmp("-ttl", optionName)) {
 			
@@ -1543,7 +1546,7 @@ udpGetOption(ClientData instanceData, Tcl_Interp *interp,
 			r = udpGetTtlOption(statePtr,interp,&tmp);
 			if (r==TCL_OK) {
 				Tcl_DStringSetLength(&ds, TCL_INTEGER_SPACE);
-				sprintf_s(Tcl_DStringValue(&ds), "%u", tmp);
+				sprintf_s(Tcl_DStringValue(&ds), sizeof(Tcl_DStringValue(&ds)), "%u", tmp);
 			}			 
 		} else {
 			CONST84 char **p;
@@ -1933,10 +1936,13 @@ udpTrace(const char *format, ...)
     
 #ifdef WIN32
 
-    static char buffer[1024];
+    static wchar_t buffer[1024];
+    char tempBuffer[1024];
     va_start (args, format);
-    _vsnprintf_s(buffer, 1024, _TRUNCATE, format, args);
-    OutputDebugString(buffer);
+    _vsnprintf_s(tempBuffer, 1024, _TRUNCATE, format, args);
+    // ½«¶à×Ö½Ú×Ö·û´®×ª»»Îª¿í×Ö·û×Ö·û´®
+    MultiByteToWideChar(CP_ACP, 0, tempBuffer, -1, buffer, sizeof(buffer) / sizeof(wchar_t));
+    OutputDebugStringW(buffer);
 
 #else /* ! WIN32 */
 

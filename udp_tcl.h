@@ -11,7 +11,6 @@
  * $Id$
  *----------------------------------------------------------------------
  */
-#pragma comment(lib, "legacy_stdio_definitions.lib")
 #ifndef UDP_TCL_H
 #define UDP_TCL_H
 
@@ -28,16 +27,15 @@
 #endif
 
 #ifdef WIN32
-#  if !defined( _WIN32_WINNT ) || ( _WIN32_WINNT < 0x0501 )
+#  if !defined( _WIN32_WINNT ) || ( _WIN32_WINNT < 0x0A00 ) // 采用最低win10版本
 #    undef  _WIN32_WINNT
-#    define _WIN32_WINNT 0x0501
+#    define _WIN32_WINNT 0x0A00
 #  endif
-#  if !defined( WINVER ) || ( WINVER < 0x0501 )
+#  if !defined( WINVER ) || ( WINVER < 0x0A00 )
 #    undef  WINVER
-#    define WINVER 0x0501
+#    define WINVER 0x0A00
 #  endif
 #  include <winsock2.h>
-#  pragma comment(lib, "WS2_32")  // 链接到 WS2_32.lib
 #  include <ws2tcpip.h>
 #else
 #  if HAVE_UNISTD_H
@@ -57,11 +55,11 @@
 #endif /* WIN32 */
 
 #ifndef PACKAGE_NAME
-#define PACKAGE_NAME "tcludp"
+#define PACKAGE_NAME "tcludp_vs"
 #endif
 
 #ifndef PACKAGE_VERSION
-#define PACKAGE_VERSION "2.0"
+#define PACKAGE_VERSION "2.5"
 #endif // !PACKAGE_VERSION
 
 
@@ -72,7 +70,7 @@
 #include <sys/types.h>
 #include "tcl.h"
 
-
+#define BUILD_udp
 #ifdef BUILD_udp
 #undef TCL_STORAGE_CLASS
 #define TCL_STORAGE_CLASS DLLEXPORT
@@ -120,7 +118,7 @@ typedef struct UdpState {
 } UdpState;
 
 
-EXTERN int Udp_Init(Tcl_Interp *interp);
-EXTERN int Udp_SafeInit(Tcl_Interp *interp);
+EXTERN int Tcludp_vs_Init(Tcl_Interp *interp);
+EXTERN int Tcludp_vs_SafeInit(Tcl_Interp *interp);
 
 #endif
